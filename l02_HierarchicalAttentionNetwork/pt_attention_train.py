@@ -24,7 +24,7 @@ if __name__ == '__main__':
     parser.add_argument('--word_gru_hidden_num', type=int, default=100, help=' gru hidden state num')
     parser.add_argument('--max_words', type=int, default=30, help=' one sentence have the max token num')
     parser.add_argument('--batch_sentence_size', type=int, default=1000, help=' the batch size of sentence batch')
-    parser.add_argument('--epoch_num', type=int, default=500, help=' the epoch of all training')
+    parser.add_argument('--epoch_num', type=int, default=1000, help=' the epoch of all training')
     parser.add_argument('--seed', type=int, default=0, help=' the seed of shuffle')
     parser.add_argument('--evaluation_step', type=int, default=200, help=' evaluation step for test corpus')
     parser.add_argument('--dev_sample_percentage', type=float, default=0.1, help=' the rate of dev sample in corpus')
@@ -111,7 +111,7 @@ if __name__ == '__main__':
     if device:
         print("=========使用 gpu 进行训练===========")
         torch.cuda.manual_seed(1)
-
+    best_acc = 0.0
     for epoch in range(epoch_num):  # again, normally you would NOT do 300 epochs, it is toy data
 
         # 每一次训练都打乱一下训练数据
@@ -125,7 +125,7 @@ if __name__ == '__main__':
         train_batch_num = train_batch_num if x_t_length % batch_sentence_size == 0 else train_batch_num + 1
         dev_batch_num = int(x_dev_length) // batch_sentence_size
         dev_batch_num = dev_batch_num if x_dev_length % batch_sentence_size ==0 else train_batch_num + 1
-        best_acc = 0.0
+
         for train_batch  in range(train_batch_num):
             if global_step >1 and global_step % evaluation_step == 0:
                 # 满足测试条件 验证测试集
