@@ -57,7 +57,6 @@ def attention_batch_context_matmul(b_U_it, context_weight):
         U_it = b_U_it[i]
         _s = torch.mm(U_it, context_weight)
         #context_weight.detach().numpy()
-        #idx = np.where(np.isnan(A))
         # [ seq_len ,1 ] 使用transpose(0,1) 可以达到同样的效果
         #_s = _s.unsqueeze(0)
         _s = _s.transpose(0,1)
@@ -150,7 +149,7 @@ class AttentionWordRNN(nn.Module):
         #使用 softmax 计算 得到每个词 的重要性 A(it) [sent_num,token_num]
         word_attn_norm = self.softmax_word(word_attn)
         #校验
-        sum = 0
+        # sum = 0
         # for i in word_attn_norm[0]:
         #     sum+= i
         # print("sum:{}".format(sum))

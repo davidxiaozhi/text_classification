@@ -409,9 +409,12 @@ def prepare_sequence(vocabulary_word2index, vocabulary_word2index_label,
     return x,y,label_list
 
 
-def shuffle(data_list):
+def shuffle(data_list,seed=10):
     shuffle_indices = list(np.arange(len(data_list)))
-    np.random.seed(10)
+    if seed == 0:
+        np.random.seed()
+    else:
+        np.random.seed(seed)
     np.random.shuffle(shuffle_indices)
     #data_shuffle = data_list[shuffle_indices]
     data_shuffle = [data_list[indices] for indices in  shuffle_indices]
