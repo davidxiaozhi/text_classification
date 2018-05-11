@@ -26,6 +26,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch_sentence_size', type=int, default=1000, help=' the batch size of sentence batch')
     parser.add_argument('--epoch_num', type=int, default=500, help=' the epoch of all training')
     parser.add_argument('--seed', type=int, default=0, help=' the seed of shuffle')
+    parser.add_argument('--evaluation_step', type=int, default=200, help=' evaluation step for test corpus')
     parser.add_argument('--dev_sample_percentage', type=float, default=0.1, help=' the rate of dev sample in corpus')
     parser.add_argument('--model_path', type=str, default='../data/', help='the model save path')
     parser.add_argument('--content_label_split', type=str, default=';;;', help='label 与文本之前的分隔符')
@@ -48,6 +49,7 @@ if __name__ == '__main__':
     content_label_split = args.content_label_split
     load_label = args.load_label
     corpus = args.corpus
+    evaluation_step = args.evaluation_step
     device = torch.cuda.is_available()
     sent_text_list, label_text_list = data_utils.load_text_data(corpus,
                               content_label_split=content_label_split,
@@ -125,7 +127,7 @@ if __name__ == '__main__':
         dev_batch_num = dev_batch_num if x_dev_length % batch_sentence_size ==0 else train_batch_num + 1
         best_acc = 0.0
         for train_batch  in range(train_batch_num):
-            if global_step >1 and global_step % 50 == 0:
+            if global_step >1 and global_step % evaluation_step == 0:
                 # 满足测试条件 验证测试集
                 test_loss=0.0
                 test_acc=0.0
