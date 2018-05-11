@@ -173,6 +173,8 @@ if __name__ == '__main__':
                 if acc > best_acc:
                     best_acc=acc
                     model_path = os.path.join(model_path, tag)
+                    if not os.path.exists(model_path):
+                        os.makedirs(model_path,exist_ok=True)
                     torch.save(word_model, os.path.join(model_path, "attention.model"))
                     torch.save(word_model, os.path.join(model_path, "fc-linear.model"))
                     print("save the model for the best_test_acc:{} global_step:{}".format(best_acc, global_step))
