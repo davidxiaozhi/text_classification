@@ -12,8 +12,8 @@ import argparse
 
 class VDCNN(nn.Module):
 
-    def __init__(self, n_classes=2, vocab_size=141, embedding_dim=200,
-                 n_gram=5, k_pool_size=16, drop_out=0.5,
+    def __init__(self, n_classes=2, vocab_size=141, embedding_dim=5,
+                 n_gram=5, k_pool_size=4, drop_out=0.5,
                  n_fc_neurons=128):
         super(VDCNN, self).__init__()
 
@@ -36,7 +36,7 @@ class VDCNN(nn.Module):
             nn.AdaptiveMaxPool1d(k_pool_size)
             ) for filter_size in range(n_gram+1) if filter_size>1])
 
-        self.fc_layers=nn.Sequential(nn.Linear(k_pool_size * (n_gram-1)*n_fc_neurons,n_classes), nn.ReLU())
+        self.fc_layers=nn.Sequential(nn.ReLU(),nn.Linear(k_pool_size * (n_gram-1)*n_fc_neurons,n_classes))
         self.__init_weights(mean=0.0, std=0.05)
 
     def __init_weights(self,mean=0.0, std=0.05):
@@ -70,8 +70,8 @@ class VDCNN(nn.Module):
         ret = ret.view(out.size(0), -1)
         ret = F.dropout(ret, p=self.drop_out)
         ret = self.fc_layers(ret)
-        ret = nn.functional.softmax(ret, dim=1)
-        return ret
+        ret4 = nn.functional.softmax(ret, dim=1)
+        return ret4
 
 
 
@@ -86,22 +86,22 @@ def get_args():
     Very Deep CNN with optional residual connections (https://arxiv.org/abs/1606.01781)
     """)
     #rdc-catalog-train.tsv
-    parser.add_argument("--train_file", type=str, default='../data/new_train.csv')
-    parser.add_argument("--train_add_rate", type=int, default=1)
+    parser.add_argument("--train_file", type=str, default='../data/check-model.tsv')
+    parser.add_argument("--train_add_rate", type=int, default=0)
     parser.add_argument("--tag", type=str, default='tag')
     parser.add_argument("--content_label_split", type=str, default='\t', help=" the label and the text split str")
     parser.add_argument("--model_folder", type=str, default="../data/DCNN/")
     parser.add_argument("--depth", type=int, choices=[9, 17, 29, 49], default=9, help="Depth of the network tested in the paper (9, 17, 29, 49)")
-    parser.add_argument("--maxlen", type=int, default=30)
+    parser.add_argument("--maxlen", type=int, default=15)
     # parser.add_argument('--shortcut', action='store_true', default=False)
     parser.add_argument('--shortcut', type=str2bool, default=False)
     parser.add_argument('--label_pre', type=str2bool, default=False)
     # parser.add_argument('--shuffle', action='store_true', default=False, help="shuffle train and test sets")
     parser.add_argument('--shuffle', type=str2bool, default=True, help="shuffle train and test sets")
-    parser.add_argument("--batch_size", type=int, default=100, help="number of example read by the gpu")
-    parser.add_argument("--epoch_num", type=int, default=10000)
-    parser.add_argument("--lr", type=float, default=0.01)
-    parser.add_argument("--lr_halve_interval", type=float, default=5, help="Number of iterations before halving learning rate")
+    parser.add_argument("--batch_size", type=int, default=10, help="number of example read by the gpu")
+    parser.add_argument("--epoch_num", type=int, default=100000000000)
+    parser.add_argument("--lr", type=float, default=0.001)
+    parser.add_argument("--lr_halve_interval", type=float, default=50000, help="Number of iterations before halving learning rate")
     parser.add_argument("--class_weights", nargs='+', type=float, default=None)
     parser.add_argument("--evaluation_step", type=int, default=500, help="Number of iterations between testing phases")
     parser.add_argument('--gpu', type=str2bool, default=True)
@@ -150,10 +150,11 @@ if __name__ == "__main__":
     logger.info("vocab_size:{},n_classes:{}".format(vocab_size, n_classes))
     # 训练集 测试集 拆分
     data_list = list(zip(sent_text_list, label_text_list))
-    data_list = data_utils.shuffle(data_list, seed=0)
+    #data_list = data_utils.shuffle(data_list, seed=0)
     x, y = zip(*data_list)
     del data_list
     dev_sample_index = -1 * int(0.1 * float(len(x)))
+    dev_sample_index = -1 if dev_sample_index == 0 else dev_sample_index
     x_train, x_dev = x[:dev_sample_index], x[dev_sample_index:]
     y_train, y_dev = y[:dev_sample_index], y[dev_sample_index:]
     del x
@@ -171,8 +172,8 @@ if __name__ == "__main__":
     torch.manual_seed(opt.seed)
     print("Seed for random numbers: ", torch.initial_seed())
 
-    model = VDCNN(n_classes=n_classes, vocab_size=vocab_size, embedding_dim=32, n_gram=3,
-                  drop_out=1,n_fc_neurons=512)
+    model = VDCNN(n_classes=n_classes, vocab_size=vocab_size, embedding_dim=100, n_gram=3,
+                  drop_out=0.5,n_fc_neurons=512)
     print(model)
     if use_gpu:
         model.cuda()
@@ -195,10 +196,10 @@ if __name__ == "__main__":
     for epoch in range(epoch_num):  # again, normally you would NOT do 300 epochs, it is toy data
         # 每一epoll次训练都打乱一下训练数据
         train_data_list = list(zip(x_train, y_train))
-        if epoch > 1:
-            if opt.shuffle:
-                #每次打乱都雷同那就没必要了
-                train_data_list = data_utils.shuffle(train_data_list, 0)
+        # if epoch > 1:
+        #     if opt.shuffle:
+        #         #每次打乱都雷同那就没必要了
+        #         train_data_list = data_utils.shuffle(train_data_list, 0)
         x_tra, y_tra = zip(*train_data_list)
         x_t_length = len(x_tra)
         x_dev_length = len(x_dev)
@@ -313,14 +314,19 @@ if __name__ == "__main__":
             # (torch.where(y_target_id>y_target_id.shape[0], y_target_id,y_target_id))
             loss = criterion(y_score, y_target_id)
             loss.backward()
-            # w_optimizer.step()
-            for f in model.parameters():
-                #print("befor:",f.data)
-                f.data.sub_(f.grad.data * opt.lr)
-                #print("after:", f.data)
-            #optimizer.step()
+            # # w_optimizer.step()
+            # for f in model.parameters():
+            #     print("befor:",f.data)
+            #     f.data.sub_(f.grad.data * opt.lr)
+            #     print("after:", f.data)
+            optimizer.step()
 
-            #print("x[0][1].embed-after:", model.embed.weight.data[x_train_id[0][1]])
+            # print("x[0][1].embed-after:", model.embed.weight.data[x_train_id[0][1]])
+            # print("target:",y_target_id)
+            # print("pre:",y_pre)
+            # print("sore:",y_score)
+            # print("x_train_batch:",x_train_batch)
+            # print("x_train_id:",x_train_id)
             print(
                 "the train train_batch_num:{}/{} of epoch:{}/{}  the acc:{}  loss:{} ,best_test_acc:{} the global_step:{}".format(
                     batch_num, train_batch_num, epoch, epoch_num, acc, loss, best_acc, global_step))
@@ -338,7 +344,7 @@ if __name__ == "__main__":
             global_step += 1
         if epoch % opt.lr_halve_interval == 0 and epoch > 0:
             lr = optimizer.state_dict()['param_groups'][0]['lr']
-            lr /= 2
+            lr /= 10
             for param_group in optimizer.param_groups:
                 param_group['lr'] = lr
             logger.info("new lr: {}".format(lr))

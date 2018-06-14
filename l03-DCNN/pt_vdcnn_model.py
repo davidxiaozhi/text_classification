@@ -48,7 +48,7 @@ class BasicConvResBlock(nn.Module):
 
 class VDCNN(nn.Module):
 
-    def __init__(self, n_classes=2, num_embedding=141, embedding_dim=16, depth=9, n_fc_neurons=2048,
+    def __init__(self, n_classes=2, num_embedding=141, embedding_dim=16, depth=9, n_fc_neurons=2048, drop_out=0.5,
                  shortcut=False, last_pooling_layer="max-pooling"):
         super(VDCNN, self).__init__()
 
@@ -92,14 +92,14 @@ class VDCNN(nn.Module):
             layers.append(BasicConvResBlock(input_dim=512, n_filters=512, kernel_size=3, padding=1, shortcut=shortcut))
 
         layers.append(nn.AdaptiveMaxPool1d(4))
-        fc_layers.extend([nn.Linear(4*512, n_fc_neurons), nn.ReLU()])
+        fc_layers.extend([nn.ReLU(),nn.Linear(4*512, n_fc_neurons)])
 
-        fc_layers.extend([nn.Linear(n_fc_neurons, n_fc_neurons), nn.ReLU()])
+        fc_layers.extend([nn.Linear(n_fc_neurons, n_fc_neurons)])
         fc_layers.extend([nn.Linear(n_fc_neurons, n_classes)])
 
         self.layers = nn.Sequential(*layers)
         self.fc_layers = nn.Sequential(*fc_layers)
-
+        self.drop_out = nn.Dropout(p=drop_out)
         self.__init_weights()
 
     def __init_weights(self):
@@ -121,7 +121,7 @@ class VDCNN(nn.Module):
         out = self.layers(out)
 
         out = out.view(out.size(0), -1)
-
+        out = self.drop_out(out)
         out = self.fc_layers(out)
         out = nn.functional.softmax(out, dim=1)
         return out

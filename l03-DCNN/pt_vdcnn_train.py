@@ -20,7 +20,7 @@ def get_args():
     Very Deep CNN with optional residual connections (https://arxiv.org/abs/1606.01781)
     """)
     #rdc-catalog-train.tsv
-    parser.add_argument("--train_file", type=str, default='../data/rdc-catalog-train-new.tsv')
+    parser.add_argument("--train_file", type=str, default='../data/check-model.tsv')
     parser.add_argument("--train_add_rate", type=int, default=1)
     parser.add_argument("--tag", type=str, default='tag')
     parser.add_argument("--content_label_split", type=str, default='\t', help=" the label and the text split str")
@@ -34,8 +34,9 @@ def get_args():
     parser.add_argument('--shuffle', type=str2bool, default=True, help="shuffle train and test sets")
     parser.add_argument("--batch_size", type=int, default=100, help="number of example read by the gpu")
     parser.add_argument("--epoch_num", type=int, default=10000)
-    parser.add_argument("--lr", type=float, default=0.01)
-    parser.add_argument("--lr_halve_interval", type=float, default=5, help="Number of iterations before halving learning rate")
+    parser.add_argument("--drop_out", type=float, default=0.5)
+    parser.add_argument("--lr", type=float, default=0.0001)
+    parser.add_argument("--lr_halve_interval", type=float, default=2000, help="Number of iterations before halving learning rate")
     parser.add_argument("--class_weights", nargs='+', type=float, default=None)
     parser.add_argument("--evaluation_step", type=int, default=500, help="Number of iterations between testing phases")
     parser.add_argument('--gpu', type=str2bool, default=True)
@@ -88,6 +89,7 @@ if __name__ == "__main__":
     x, y = zip(*data_list)
     del data_list
     dev_sample_index = -1 * int(0.1 * float(len(x)))
+    dev_sample_index = -1 if dev_sample_index == 0 else dev_sample_index
     x_train, x_dev = x[:dev_sample_index], x[dev_sample_index:]
     y_train, y_dev = y[:dev_sample_index], y[dev_sample_index:]
     del x
@@ -105,8 +107,8 @@ if __name__ == "__main__":
     torch.manual_seed(opt.seed)
     print("Seed for random numbers: ", torch.initial_seed())
 
-    model = VDCNN(n_classes=n_classes, num_embedding=vocab_size, embedding_dim=32, depth=opt.depth, n_fc_neurons=128,
-                 shortcut=False)
+    model = VDCNN(n_classes=n_classes, num_embedding=vocab_size, embedding_dim=256, depth=opt.depth,
+                  drop_out=opt.drop_out, n_fc_neurons=128, shortcut=False)
     # model = VDCNN(n_classes=n_classes, vocab_size=vocab_size, embedding_dim=32, n_gram=3,
     #               n_fc_neurons=512)
     print(model)
@@ -119,8 +121,8 @@ if __name__ == "__main__":
         criterion = nn.CrossEntropyLoss()
 
     #optimizer = torch.optim.SGD(model.parameters(), lr=opt.lr)
-    #optimizer = torch.optim.SGD(model.parameters(), lr=opt.lr, momentum=0.9)
-    optimizer = torch.optim.Adam(model.parameters(), lr=opt.lr, amsgrad=True)
+    optimizer = torch.optim.SGD(model.parameters(), lr=opt.lr, momentum=0.9)
+    #optimizer = torch.optim.Adam(model.parameters(), lr=opt.lr, amsgrad=True)
     model.train()
     global_step = 1
 
@@ -253,20 +255,20 @@ if __name__ == "__main__":
                 "the train train_batch_num:{}/{} of epoch:{}/{}  the acc:{}  loss:{} ,best_test_acc:{} the global_step:{}".format(
                     batch_num, train_batch_num, epoch, epoch_num, acc, loss, best_acc, global_step))
 
-            #if global_step % 2 == 1:
-            #for m in model.modules():
-            # for name, m in model.named_modules():
-            #     if isinstance(m, nn.Embedding):
-            #         print(name, "-:-", m.weight.grad)
-            #     if isinstance(m, nn.Conv1d):
-            #         print(name,"-:-",m.weight.grad)
-            #     if isinstance(m, nn.Linear):
-            #         print(name, "-:-", m.weight.grad)
+            if global_step % 5000 == 1:
+                # for m in model.modules():
+                for name, m in model.named_modules():
+                    if isinstance(m, nn.Embedding):
+                        print(name, "-:-", m.weight.grad)
+                    if isinstance(m, nn.Conv1d):
+                        print(name,"-:-",m.weight.grad)
+                    if isinstance(m, nn.Linear):
+                        print(name, "-:-", m.weight.grad)
             #print("y_pre:", torch.cat((y_target_id.unsqueeze(1),y_pre),dim = 1))
             global_step += 1
         if epoch % opt.lr_halve_interval == 0 and epoch > 0:
             lr = optimizer.state_dict()['param_groups'][0]['lr']
-            lr /= 2
+            lr /= 10
             for param_group in optimizer.param_groups:
                 param_group['lr'] = lr
             logger.info("new lr: {}".format(lr))

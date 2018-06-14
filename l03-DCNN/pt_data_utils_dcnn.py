@@ -21,21 +21,6 @@ def tokenizer(iterator):
   for value in iterator:
     yield TOKENIZER_RE.findall(value)
 
-
-
-
-def padding(words,aim_length=200):
-    sentence_length = len(words)
-    if sentence_length >= aim_length:
-        return words[0:aim_length]
-    else:
-        matrix = [ 0 for i in range(aim_length)]
-        for i in range(sentence_length):
-            matrix[i] = words[i]        
-        return  matrix      
-
-
-
 def vacab_from_text(sent_text_list,label_text_list,
                     words_split=" ",
                     mini_count=0,
@@ -82,7 +67,7 @@ def vacab_from_text(sent_text_list,label_text_list,
     # label_dic_sort = sorted(label_dic.keys(), key=lambda x: label_dic[x], reverse=True)
     # word
     for index,value  in enumerate(vocabulary_key_sort):
-        if vocabulary_freq[value] > mini_count:
+        if vocabulary_freq[value] >= mini_count:
             vocabulary_index2word[index+1] = value
             vocabulary_word2index[value] = index +1
     # label 从 0开始 pytorch loss 问题
@@ -192,10 +177,9 @@ def prepare_sequence(vocabulary_word2index, vocabulary_word2index_label,
                     print(" error-vacab-size:{}".format(sents[i]))
     #有选项决定是否加载处理label
     if len(x_text) == len(y_text):
-        # label 已经被替换成 id 这里转矩阵
         for index, label_id in enumerate(label_list):
             # id 从 1开始的所以要 -1
-            y[index][label_id - 1] = 1
+            y[index][label_id] = 1
 
     del sent_list
     # shuffle_indices = np.random.permutation(np.arange(len(y)))
