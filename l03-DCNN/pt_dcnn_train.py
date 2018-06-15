@@ -66,7 +66,7 @@ class VDCNN(nn.Module):
             s.append(op)
         # batch_size (n_gram-1)*n_fc_neurons 16
         ret = torch.cat(s, dim=2)
-        #del s
+        del s
         ret = ret.view(out.size(0), -1)
         ret = F.dropout(ret, p=self.drop_out)
         ret = self.fc_layers(ret)
@@ -93,6 +93,7 @@ def get_args():
     parser.add_argument("--model_folder", type=str, default="../data/DCNN/")
     parser.add_argument("--depth", type=int, choices=[9, 17, 29, 49], default=9, help="Depth of the network tested in the paper (9, 17, 29, 49)")
     parser.add_argument("--maxlen", type=int, default=15)
+    parser.add_argument("--drop_out", type=float, default=0.5)
     # parser.add_argument('--shortcut', action='store_true', default=False)
     parser.add_argument('--shortcut', type=str2bool, default=False)
     parser.add_argument('--label_pre', type=str2bool, default=False)
@@ -123,6 +124,7 @@ if __name__ == "__main__":
     batch_size = opt.batch_size
     evaluation_step = opt.evaluation_step
     seed = opt.seed
+    drop_out = opt.drop_out
     model_path = opt.model_folder
     tag = opt.tag
     content_label_split = opt.content_label_split
@@ -150,7 +152,7 @@ if __name__ == "__main__":
     logger.info("vocab_size:{},n_classes:{}".format(vocab_size, n_classes))
     # 训练集 测试集 拆分
     data_list = list(zip(sent_text_list, label_text_list))
-    #data_list = data_utils.shuffle(data_list, seed=0)
+    data_list = data_utils.shuffle(data_list, seed=0)
     x, y = zip(*data_list)
     del data_list
     dev_sample_index = -1 * int(0.1 * float(len(x)))
@@ -173,7 +175,7 @@ if __name__ == "__main__":
     print("Seed for random numbers: ", torch.initial_seed())
 
     model = VDCNN(n_classes=n_classes, vocab_size=vocab_size, embedding_dim=100, n_gram=3,
-                  drop_out=0.5,n_fc_neurons=512)
+                  drop_out=drop_out,n_fc_neurons=512)
     print(model)
     if use_gpu:
         model.cuda()
@@ -196,10 +198,10 @@ if __name__ == "__main__":
     for epoch in range(epoch_num):  # again, normally you would NOT do 300 epochs, it is toy data
         # 每一epoll次训练都打乱一下训练数据
         train_data_list = list(zip(x_train, y_train))
-        # if epoch > 1:
-        #     if opt.shuffle:
-        #         #每次打乱都雷同那就没必要了
-        #         train_data_list = data_utils.shuffle(train_data_list, 0)
+        if epoch > 1:
+            if opt.shuffle:
+                #每次打乱都雷同那就没必要了
+                train_data_list = data_utils.shuffle(train_data_list, 0)
         x_tra, y_tra = zip(*train_data_list)
         x_t_length = len(x_tra)
         x_dev_length = len(x_dev)
@@ -214,7 +216,7 @@ if __name__ == "__main__":
                 # 满足测试条件 验证测试集
                 # 开启验证模式
                 model.eval()
-                # torch.set_grad_enabled(False)
+                torch.set_grad_enabled(False)
                 test_loss = 0.0
                 test_acc = 0.0
                 for test_batch in range(dev_batch_num):
@@ -266,17 +268,12 @@ if __name__ == "__main__":
                     print(
                         "the -Evaluation- train_batch_num:{}/{} of epoch:{}/{}  the test acc:{}  loss:{} ,best_test_acc:{} the global_step:{} ".format(
                             batch_num, train_batch_num, epoch, epoch_num, avg_acc, avg_loss, best_acc, global_step))
-                #torch.set_grad_enabled(True)
+                torch.set_grad_enabled(True)
                 model.train()
             start_index = batch_num * batch_size
             end_index = start_index + batch_size
             # list [:] endindex 自动 -1
             end_index = end_index if end_index <= x_t_length else x_t_length
-
-            # Step 1. Remember that Pytorch accumulates gradients.
-            # We need to clear them out before each instance
-            optimizer.zero_grad()
-            model.zero_grad()
 
             # Step 2. Get our inputs ready for the network, that is, turn them into
             # Tensors of word indices.
@@ -285,9 +282,7 @@ if __name__ == "__main__":
             x_train_id, y_train_id, _ = data_utils.prepare_sequence(vocabulary_word2index, label_word2index,
                                                                     x_train_batch, y_train_batch, max_word_length=opt.maxlen)
 
-            # Step 3. Run our forward pass.
-            # Also, we need to clear out the hidden state of the LSTM,
-            # detaching it from its history on the last instance.
+            optimizer.zero_grad()
             x_train_id = torch.tensor(x_train_id)
             y_train_id = torch.tensor(y_train_id, dtype=torch.double)
             if use_gpu:
@@ -301,7 +296,6 @@ if __name__ == "__main__":
             # 以下两个 argmax 为了保证同纬度比较
             y_pre = torch.argmax(y_score, dim=1, keepdim=True)
             y_target_id = torch.argmax(y_train_id, dim=1, keepdim=True)
-            #y_pre.requires_grad_(True)
             # compute acc
             compare = torch.eq(y_pre, y_target_id).view(-1)
             sum = torch.sum(compare, dim=0)
@@ -314,33 +308,27 @@ if __name__ == "__main__":
             # (torch.where(y_target_id>y_target_id.shape[0], y_target_id,y_target_id))
             loss = criterion(y_score, y_target_id)
             loss.backward()
-            # # w_optimizer.step()
             # for f in model.parameters():
-            #     print("befor:",f.data)
-            #     f.data.sub_(f.grad.data * opt.lr)
-            #     print("after:", f.data)
+            #     #print("befor:",f.data)
+            #     if hasattr(f, "data") and hasattr(f.grad, "data"):
+            #         f.data.sub_(f.grad.data * opt.lr)
+            # w_optimizer.step()p
             optimizer.step()
-
-            # print("x[0][1].embed-after:", model.embed.weight.data[x_train_id[0][1]])
-            # print("target:",y_target_id)
-            # print("pre:",y_pre)
-            # print("sore:",y_score)
-            # print("x_train_batch:",x_train_batch)
-            # print("x_train_id:",x_train_id)
+            #print("x[0][1].embed-after:", model.embed.weight.data[x_train_id[0][1]])
             print(
                 "the train train_batch_num:{}/{} of epoch:{}/{}  the acc:{}  loss:{} ,best_test_acc:{} the global_step:{}".format(
                     batch_num, train_batch_num, epoch, epoch_num, acc, loss, best_acc, global_step))
 
-            # if global_step % 5 == 1:
-                #for m in model.modules():
-                # for name, m in model.named_modules():
-                #     if isinstance(m, nn.Embedding):
-                #         print(name, "-:-", m.weight.grad)
-                    # if isinstance(m, nn.Conv1d):
-                    #     print(name,"-:-",m.weight.grad)
-                    # if isinstance(m, nn.Linear):
-                    #     print(name, "-:-", m.weight.grad)
-                #print("y_pre:", torch.cat((y_target_id.unsqueeze(1),y_pre),dim = 1))
+            if global_step % 5000 == 1:
+                # for m in model.modules():
+                for name, m in model.named_modules():
+                    if isinstance(m, nn.Embedding):
+                        print(name, "-:-", m.weight.grad)
+                    if isinstance(m, nn.Conv1d):
+                        print(name,"-:-",m.weight.grad)
+                    if isinstance(m, nn.Linear):
+                        print(name, "-:-", m.weight.grad)
+            #print("y_pre:", torch.cat((y_target_id.unsqueeze(1),y_pre),dim = 1))
             global_step += 1
         if epoch % opt.lr_halve_interval == 0 and epoch > 0:
             lr = optimizer.state_dict()['param_groups'][0]['lr']
@@ -348,7 +336,6 @@ if __name__ == "__main__":
             for param_group in optimizer.param_groups:
                 param_group['lr'] = lr
             logger.info("new lr: {}".format(lr))
-
 
 
 
