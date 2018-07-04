@@ -10,12 +10,12 @@ import lib
 import argparse
 
 
-class VDCNN(nn.Module):
+class DCNN(nn.Module):
 
     def __init__(self, n_classes=2, vocab_size=141, embedding_dim=5,
-                 n_gram=5, k_pool_size=4, drop_out=0.5,
+                 n_gram=5, k_pool_size=16, drop_out=0.5,
                  n_fc_neurons=128):
-        super(VDCNN, self).__init__()
+        super(DCNN, self).__init__()
 
         layers=[]
         self.embedding_dim=embedding_dim
@@ -28,26 +28,27 @@ class VDCNN(nn.Module):
         #                           norm_type=2, scale_grad_by_freq=False, sparse=False)
         self.embed = nn.Embedding(vocab_size, embedding_dim, padding_idx=0)
         # pretrained_weight is a numpy matrix of shape (num_embeddings, embedding_dim)
-
-
         self.n_gram_convs = nn.ModuleList([ nn.Sequential(
             nn.Conv1d(embedding_dim, n_fc_neurons, kernel_size=filter_size, padding=1),
-            nn.ReLU(),
+            nn.BatchNorm1d(n_fc_neurons, momentum=0.1),
+            nn.PReLU(),
             nn.AdaptiveMaxPool1d(k_pool_size)
             ) for filter_size in range(n_gram+1) if filter_size>1])
 
-        self.fc_layers=nn.Sequential(nn.ReLU(),nn.Linear(k_pool_size * (n_gram-1)*n_fc_neurons,n_classes))
+        self.fc_layers=nn.Sequential(nn.BatchNorm1d(k_pool_size * (n_gram-1)*n_fc_neurons, momentum=0.1),
+                                     nn.PReLU(), nn.Linear(k_pool_size * (n_gram-1)*n_fc_neurons,n_classes))
         self.__init_weights(mean=0.0, std=0.05)
 
     def __init_weights(self,mean=0.0, std=0.05):
         for m in self.modules():
             if isinstance(m, nn.Conv1d):
-                nn.init.xavier_uniform_(m.weight, nn.init.calculate_gain('relu'))
+                nn.init.kaiming_normal(m.weight, mode='fan_out')
+                # nn.init.xavier_uniform_(m.weight, nn.init.calculate_gain('relu'))
                 #m.weight.data.normal_(mean, std)
             elif isinstance(m, nn.Linear):
                 nn.init.xavier_uniform_(m.weight)
             elif isinstance(m,nn.Embedding):
-                nn.init.kaiming_uniform_(m.weight, mode='fan_in', nonlinearity='relu')
+                nn.init.kaiming_uniform_(m.weight, mode='fan_out', nonlinearity='relu')
 
         # self.embed.weight.data.copy_(torch.from_numpy(pretrained_weight))
         #self.embed.weight.data.normal_(-5.0, 5.0)
@@ -88,10 +89,12 @@ def get_args():
     #rdc-catalog-train.tsv
     parser.add_argument("--train_file", type=str, default='../data/check-model.tsv')
     parser.add_argument("--train_add_rate", type=int, default=0)
+    parser.add_argument("--embedding_dim", type=int, default=300, help="the dim size of embedding")
+    parser.add_argument("--n_fc_neurons", type=int, default=1024, help="the number 0f hidden unit")
     parser.add_argument("--tag", type=str, default='tag')
     parser.add_argument("--content_label_split", type=str, default='\t', help=" the label and the text split str")
     parser.add_argument("--model_folder", type=str, default="../data/DCNN/")
-    parser.add_argument("--depth", type=int, choices=[9, 17, 29, 49], default=9, help="Depth of the network tested in the paper (9, 17, 29, 49)")
+    parser.add_argument("--n_gram", type=int, choices=[2, 3, 5], default=5, help="the window size of n-gram")
     parser.add_argument("--maxlen", type=int, default=15)
     parser.add_argument("--drop_out", type=float, default=0.5)
     # parser.add_argument('--shortcut', action='store_true', default=False)
@@ -102,7 +105,10 @@ def get_args():
     parser.add_argument("--batch_size", type=int, default=10, help="number of example read by the gpu")
     parser.add_argument("--epoch_num", type=int, default=100000000000)
     parser.add_argument("--lr", type=float, default=0.001)
-    parser.add_argument("--lr_halve_interval", type=float, default=50000, help="Number of iterations before halving learning rate")
+    parser.add_argument("--lr_halve_interval", type=int, default=60, help="times of best_acc not change,and to change learning rate")
+    parser.add_argument("--lr_decay_times", type=int, default=10, help="times of ls decay times,then not change the lr")
+    parser.add_argument("--times_for_stop", type=int, default=200,
+                        help="the best acc has not change for N times ,stop train")
     parser.add_argument("--class_weights", nargs='+', type=float, default=None)
     parser.add_argument("--evaluation_step", type=int, default=500, help="Number of iterations between testing phases")
     parser.add_argument('--gpu', type=str2bool, default=True)
@@ -174,8 +180,8 @@ if __name__ == "__main__":
     torch.manual_seed(opt.seed)
     print("Seed for random numbers: ", torch.initial_seed())
 
-    model = VDCNN(n_classes=n_classes, vocab_size=vocab_size, embedding_dim=100, n_gram=3,
-                  drop_out=drop_out,n_fc_neurons=512)
+    model = DCNN(n_classes=n_classes, vocab_size=vocab_size, embedding_dim=opt.embedding_dim, n_gram=opt.n_gram,
+                  drop_out=drop_out,n_fc_neurons=opt.n_fc_neurons)
     print(model)
     if use_gpu:
         model.cuda()
@@ -194,6 +200,10 @@ if __name__ == "__main__":
         print("=========使用 gpu 进行训练===========")
         torch.cuda.manual_seed(1)
     best_acc = 0.0
+    # 最好的准确率维持的次数,用来作为调整学习率的阈值
+    best_acc_times=0
+    best_acc_loss=0.0
+    lr_decay_times=0
     epoch_num=opt.epoch_num
     for epoch in range(epoch_num):  # again, normally you would NOT do 300 epochs, it is toy data
         # 每一epoll次训练都打乱一下训练数据
@@ -256,20 +266,38 @@ if __name__ == "__main__":
 
                 if avg_acc > best_acc:
                     best_acc = avg_acc
+                    best_acc_loss=avg_loss
+                    best_acc_times = 1
+                    lr_decay_times = 0
                     save_model_path = os.path.join(model_path, tag)
                     # if not os.path.exists(save_model_path):
                     os.makedirs(save_model_path, exist_ok=True)
                     torch.save(model, os.path.join(save_model_path, "vdcnn.model"))
-                    print("save the model for the best_test_acc:{} global_step:{} epoch:{}/{} ".format(best_acc,
+                    print("save the model for the best_test_acc:{} best_acc_loss:{} global_step:{} epoch:{}/{} ".format(best_acc,
+                                                                                                       best_acc_loss,
                                                                                                        global_step,
                                                                                                        epoch,
                                                                                                        epoch_num))
                 else:
+                    best_acc_times += 1
                     print(
-                        "the -Evaluation- train_batch_num:{}/{} of epoch:{}/{}  the test acc:{}  loss:{} ,best_test_acc:{} the global_step:{} ".format(
-                            batch_num, train_batch_num, epoch, epoch_num, avg_acc, avg_loss, best_acc, global_step))
+                        "the -Evaluation- train_batch_num:{}/{} of epoch:{}/{}  the test acc:{}  loss:{} ,best_test_acc:{} best_acc_times:{} the global_step:{} ".format(
+                            batch_num, train_batch_num, epoch, epoch_num, avg_acc,
+                            avg_loss, best_acc, best_acc_times, global_step))
                 torch.set_grad_enabled(True)
                 model.train()
+                # 检测是否需要修改学习率
+                if best_acc_times >= opt.lr_halve_interval:
+                    lr = optimizer.state_dict()['param_groups'][0]['lr']
+                    if lr >= 1e-10:
+                        lr /= 10
+                        for param_group in optimizer.param_groups:
+                            param_group['lr'] = lr
+                        logger.info("new lr: {}".format(lr))
+                        # 学习率变更好,重新计数
+                        best_acc_times = 1
+                        lr_decay_times += 1
+
             start_index = batch_num * batch_size
             end_index = start_index + batch_size
             # list [:] endindex 自动 -1
@@ -316,8 +344,8 @@ if __name__ == "__main__":
             optimizer.step()
             #print("x[0][1].embed-after:", model.embed.weight.data[x_train_id[0][1]])
             print(
-                "the train train_batch_num:{}/{} of epoch:{}/{}  the acc:{}  loss:{} ,best_test_acc:{} the global_step:{}".format(
-                    batch_num, train_batch_num, epoch, epoch_num, acc, loss, best_acc, global_step))
+                "the train train_batch_num:{}/{} of epoch:{}/{}  the acc:{}  loss:{} ,best_test_acc:{} best_acc_loss:{} best_acc_times:{} the global_step:{}".format(
+                    batch_num, train_batch_num, epoch, epoch_num, acc, loss, best_acc, best_acc_loss, best_acc_times, global_step))
 
             if global_step % 5000 == 1:
                 # for m in model.modules():
@@ -330,12 +358,15 @@ if __name__ == "__main__":
                         print(name, "-:-", m.weight.grad)
             #print("y_pre:", torch.cat((y_target_id.unsqueeze(1),y_pre),dim = 1))
             global_step += 1
-        if epoch % opt.lr_halve_interval == 0 and epoch > 0:
-            lr = optimizer.state_dict()['param_groups'][0]['lr']
-            lr /= 10
-            for param_group in optimizer.param_groups:
-                param_group['lr'] = lr
-            logger.info("new lr: {}".format(lr))
+
+        if best_acc_times >= opt.times_for_stop:
+            print("the parameters:{}", vars(get_args()))
+            print("best_acc_times:{} the train process is about to stop...........".format(best_acc_times))
+            exit(-2)
+        if lr_decay_times >= opt.lr_decay_times:
+            print("the parameters:{}", vars(get_args()))
+            print("lr_decay_times:{} the train process is about to stop...........".format(lr_decay_times))
+            exit(-2)
 
 
 

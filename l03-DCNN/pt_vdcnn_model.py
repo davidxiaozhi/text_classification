@@ -21,7 +21,7 @@ class BasicConvResBlock(nn.Module):
 
         self.conv1 = nn.Conv1d(input_dim, n_filters, kernel_size=kernel_size, padding=padding, stride=stride)
         self.bn1 = nn.BatchNorm1d(n_filters)
-        self.relu = nn.ReLU()
+        self.relu = nn.PReLU()
         self.conv2 = nn.Conv1d(n_filters, n_filters, kernel_size=kernel_size, padding=padding, stride=stride)
         self.bn2 = nn.BatchNorm1d(n_filters)
 
@@ -49,7 +49,7 @@ class BasicConvResBlock(nn.Module):
 class VDCNN(nn.Module):
 
     def __init__(self, n_classes=2, num_embedding=141, embedding_dim=16, depth=9, n_fc_neurons=2048, drop_out=0.5,
-                 shortcut=False, last_pooling_layer="max-pooling"):
+                 shortcut=False, k_pool_size=16, last_pooling_layer="max-pooling"):
         super(VDCNN, self).__init__()
 
         layers = []
@@ -91,8 +91,8 @@ class VDCNN(nn.Module):
         for _ in range(n_conv_block_512 - 1):
             layers.append(BasicConvResBlock(input_dim=512, n_filters=512, kernel_size=3, padding=1, shortcut=shortcut))
 
-        layers.append(nn.AdaptiveMaxPool1d(4))
-        fc_layers.extend([nn.ReLU(),nn.Linear(4*512, n_fc_neurons)])
+        layers.append(nn.AdaptiveMaxPool1d(k_pool_size))
+        fc_layers.extend([nn.BatchNorm1d(k_pool_size*512, momentum=0.1), nn.PReLU(), nn.Linear(k_pool_size*512, n_fc_neurons)])
 
         fc_layers.extend([nn.Linear(n_fc_neurons, n_fc_neurons)])
         fc_layers.extend([nn.Linear(n_fc_neurons, n_classes)])
@@ -105,13 +105,18 @@ class VDCNN(nn.Module):
     def __init_weights(self):
         for m in self.modules():
             if isinstance(m, nn.Conv1d):
-                #nn.init.kaiming_normal_(m.weight, mode='fan_in')
-                nn.init.xavier_uniform_(m.weight, nn.init.calculate_gain('relu'))
+                nn.init.kaiming_normal_(m.weight, mode='fan_in')
+                #nn.init.xavier_uniform_(m.weight, nn.init.calculate_gain('relu'))
                 #print((m.bias is not None))
                 if m.bias is not None:
                     #constant(m.bias, 0)
                     nn.init.constant_(m.bias, 0)
-        self.embed.weight.data.normal_(-1.0, 1.0)
+            elif isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                nn.init.constant_(m.bias, 0)
+            elif isinstance(m,nn.Embedding):
+                nn.init.kaiming_uniform_(m.weight, mode='fan_in')
+        # self.embed.weight.data.normal_(-0.25, 0.25)
 
     def forward(self, x):
 

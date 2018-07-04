@@ -36,7 +36,9 @@ def get_args():
     parser.add_argument("--epoch_num", type=int, default=10000)
     parser.add_argument("--drop_out", type=float, default=0.5)
     parser.add_argument("--lr", type=float, default=0.0001)
-    parser.add_argument("--lr_halve_interval", type=float, default=2000, help="Number of iterations before halving learning rate")
+    parser.add_argument("--lr_halve_interval", type=int, default=20, help="Number of iterations before halving learning rate")
+    parser.add_argument("--lr_decay_times", type=int, default=10, help="times of ls decay times")
+    parser.add_argument("--times_for_stop", type=int, default=100, help="the best acc has not change for N times ,stop train")
     parser.add_argument("--class_weights", nargs='+', type=float, default=None)
     parser.add_argument("--evaluation_step", type=int, default=500, help="Number of iterations between testing phases")
     parser.add_argument('--gpu', type=str2bool, default=True)
@@ -107,21 +109,33 @@ if __name__ == "__main__":
     torch.manual_seed(opt.seed)
     print("Seed for random numbers: ", torch.initial_seed())
 
-    model = VDCNN(n_classes=n_classes, num_embedding=vocab_size, embedding_dim=256, depth=opt.depth,
-                  drop_out=opt.drop_out, n_fc_neurons=128, shortcut=False)
+    model = VDCNN(n_classes=n_classes, num_embedding=vocab_size, embedding_dim=300, depth=opt.depth,
+                  drop_out=opt.drop_out, n_fc_neurons=1024, shortcut=False)
     # model = VDCNN(n_classes=n_classes, vocab_size=vocab_size, embedding_dim=32, n_gram=3,
     #               n_fc_neurons=512)
     print(model)
     if use_gpu:
         model.cuda()
-        #model=nn.DataParallel(model)
+        # model=nn.DataParallel(model)
     if opt.class_weights:
         criterion = nn.CrossEntropyLoss(torch.cuda.FloatTensor(opt.class_weights))
     else:
         criterion = nn.CrossEntropyLoss()
 
     #optimizer = torch.optim.SGD(model.parameters(), lr=opt.lr)
-    optimizer = torch.optim.SGD(model.parameters(), lr=opt.lr, momentum=0.9)
+    params_dict = dict(model.named_parameters())
+    params = []
+    for key, value in params_dict.items():
+        pre_key = key.split(".")
+
+        if pre_key[0] == 'layers':
+            layer_lr = int((opt.depth)-int(pre_key[1])) * 100 * opt.lr
+            params += [{'params': [value], 'lr': layer_lr}]
+        else:
+            params += [{'params': [value], 'lr': opt.lr}]
+    #print(params)
+    #exit(-2)
+    optimizer = torch.optim.SGD(params, lr=opt.lr, momentum=0.9)
     #optimizer = torch.optim.Adam(model.parameters(), lr=opt.lr, amsgrad=True)
     model.train()
     global_step = 1
@@ -130,6 +144,8 @@ if __name__ == "__main__":
         print("=========使用 gpu 进行训练===========")
         torch.cuda.manual_seed(1)
     best_acc = 0.0
+    best_acc_times = 0
+    lr_decay_times = 0
     epoch_num=opt.epoch_num
     for epoch in range(epoch_num):  # again, normally you would NOT do 300 epochs, it is toy data
         # 每一epoll次训练都打乱一下训练数据
@@ -191,6 +207,8 @@ if __name__ == "__main__":
                 avg_loss = test_loss / dev_batch_num
 
                 if avg_acc > best_acc:
+                    lr_decay_times = 0
+                    best_acc_times = 1
                     best_acc = avg_acc
                     save_model_path = os.path.join(model_path, tag)
                     # if not os.path.exists(save_model_path):
@@ -201,11 +219,23 @@ if __name__ == "__main__":
                                                                                                        epoch,
                                                                                                        epoch_num))
                 else:
+                    best_acc_times += 1
                     print(
-                        "the -Evaluation- train_batch_num:{}/{} of epoch:{}/{}  the test acc:{}  loss:{} ,best_test_acc:{} the global_step:{} ".format(
-                            batch_num, train_batch_num, epoch, epoch_num, avg_acc, avg_loss, best_acc, global_step))
+                        "the -Evaluation- train_batch_num:{}/{} of epoch:{}/{}  the test acc:{}  loss:{} ,best_test_acc:{} best_acc_times:{} the global_step:{} ".format(
+                            batch_num, train_batch_num, epoch, epoch_num, avg_acc, avg_loss, best_acc, best_acc_times, global_step))
                 torch.set_grad_enabled(True)
                 model.train()
+                # 检测是否需要修改学习率
+                if best_acc_times >= opt.lr_halve_interval:
+                    lr = optimizer.state_dict()['param_groups'][0]['lr']
+                    lr /= 10
+                    for param_group in optimizer.param_groups:
+                        param_group['lr'] = lr
+                    logger.info("new lr: {}".format(lr))
+                    # 学习率变更好,重新计数
+                    best_acc_times = 1
+                    lr_decay_times += 1
+
             start_index = batch_num * batch_size
             end_index = start_index + batch_size
             # list [:] endindex 自动 -1
@@ -252,8 +282,8 @@ if __name__ == "__main__":
             optimizer.step()
             #print("x[0][1].embed-after:", model.embed.weight.data[x_train_id[0][1]])
             print(
-                "the train train_batch_num:{}/{} of epoch:{}/{}  the acc:{}  loss:{} ,best_test_acc:{} the global_step:{}".format(
-                    batch_num, train_batch_num, epoch, epoch_num, acc, loss, best_acc, global_step))
+                "the train train_batch_num:{}/{} of epoch:{}/{}  the acc:{}  loss:{} ,best_test_acc:{} best_acc_times:{} the global_step:{}".format(
+                    batch_num, train_batch_num, epoch, epoch_num, acc, loss, best_acc, best_acc_times, global_step))
 
             if global_step % 5000 == 1:
                 # for m in model.modules():
@@ -266,10 +296,12 @@ if __name__ == "__main__":
                         print(name, "-:-", m.weight.grad)
             #print("y_pre:", torch.cat((y_target_id.unsqueeze(1),y_pre),dim = 1))
             global_step += 1
-        if epoch % opt.lr_halve_interval == 0 and epoch > 0:
-            lr = optimizer.state_dict()['param_groups'][0]['lr']
-            lr /= 10
-            for param_group in optimizer.param_groups:
-                param_group['lr'] = lr
-            logger.info("new lr: {}".format(lr))
 
+        if best_acc_times >= opt.times_for_stop:
+            print("the parameters:{}", vars(get_args()))
+            print("best_acc_times:{} the train process is about to stop...........".format(best_acc_times))
+            exit(-2)
+        if lr_decay_times >= opt.lr_decay_times:
+            print("the parameters:{}", vars(get_args()))
+            print("lr_decay_times:{} the train process is about to stop...........".format(lr_decay_times))
+            exit(-2)

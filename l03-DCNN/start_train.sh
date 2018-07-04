@@ -16,6 +16,6 @@ echo "删除已经训练好的模型文件 ${model_path}/${tag}"
 \rm -rvf "${model_path}/${tag}"
 
 nohup python3 -u ./pt_vdcnn_train.py  --tag=${tag} --train_file=${train_file} --model_folder=${model_folder} \
- --train_add_rate=0 --depth=9 --maxlen=30   --batch_size=400 --gpu=True --label_pre=False > ${logs}  2>&1  &
+ --train_add_rate=0 --depth=9 --maxlen=28 --epoch_num=10000 --lr=0.01  --drop_out=0.5  --lr_halve_interval=30  --batch_size=200 --gpu=True --label_pre=False > ${logs}  2>&1  &
 ps -ef|grep "python3";
 tail -fn 100 ${logs}
